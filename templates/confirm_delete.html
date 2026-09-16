@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center py-4">
+  <div class="col-12 col-md-8 col-lg-6">
+    <section class="card border-danger shadow-sm">
+      <div class="card-body p-4 p-md-5">
+        <h1 class="h3 text-danger mb-3">{{ title }}</h1>
+        <p class="fw-semibold text-break">{{ item_name }}</p>
+        <div class="alert alert-warning" role="alert">{{ warning }}</div>
+        <p class="text-secondary">لا يمكن التراجع من داخل اللوحة بعد إتمام الحذف.</p>
+        <div class="d-flex flex-column flex-sm-row gap-2 mt-4">
+          <form method="post" class="flex-grow-1">
+            {{ form.hidden_tag() }}
+            <button class="btn btn-danger w-100" type="submit">نعم، احذف نهائيًا</button>
+          </form>
+          <a class="btn btn-outline-secondary flex-grow-1" href="{{ cancel_url }}">إلغاء</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

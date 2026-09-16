@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-9">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h1 class="h2 mb-0">{{ title }}</h1>
+      <a class="btn btn-outline-secondary" href="{{ url_for('question_list') }}">رجوع</a>
+    </div>
+    <form method="post" class="card border-0 shadow-sm" novalidate>
+      <div class="card-body p-4">
+        {{ form.hidden_tag() }}
+        <div class="row g-3">
+          <div class="col-12">
+            {{ form.disease_id.label(class="form-label fw-semibold") }}
+            {{ form.disease_id(class="form-select") }}
+            {% for error in form.disease_id.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-12">
+            {{ form.question.label(class="form-label fw-semibold") }}
+            {{ form.question(class="form-control", rows="4") }}
+            {% for error in form.question.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          {% for field in [form.option_a, form.option_b, form.option_c, form.option_d] %}
+          <div class="col-12 col-md-6">
+            {{ field.label(class="form-label fw-semibold") }}
+            {{ field(class="form-control") }}
+            {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+          <div class="col-12 col-md-6">
+            {{ form.correct_answer.label(class="form-label fw-semibold") }}
+            {{ form.correct_answer(class="form-select") }}
+          </div>
+          <div class="col-12 col-md-6">
+            {{ form.difficulty.label(class="form-label fw-semibold") }}
+            {{ form.difficulty(class="form-control") }}
+            {% for error in form.difficulty.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          <div class="col-12">
+            {{ form.explanation.label(class="form-label fw-semibold") }}
+            {{ form.explanation(class="form-control", rows="4") }}
+            {% for error in form.explanation.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+        </div>
+      </div>
+      <div class="card-footer bg-white border-0 p-4 pt-0">
+        {{ form.submit(class="btn btn-primary btn-lg px-5") }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

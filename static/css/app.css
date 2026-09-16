@@ -1,0 +1,38 @@
+:root {
+  --app-bg: #f4f7fb;
+  --app-primary: #0b5ed7;
+  --app-text: #172033;
+}
+
+html { min-height: 100%; }
+body {
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--app-text);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+.navbar { padding-top: max(.75rem, env(safe-area-inset-top)); }
+.login-shell { min-height: calc(100vh - 11rem); }
+.card, .stat-card { border-radius: 1rem; }
+.stat-card { padding: 1.5rem; border: 1px solid rgba(11, 94, 215, .08); }
+.stat-label { color: #607089; font-weight: 600; }
+.stat-value { color: var(--app-primary); font-size: clamp(2rem, 6vw, 3.25rem); font-weight: 800; }
+.form-control, .form-select { min-height: 3rem; font-size: 1rem; }
+textarea.form-control { min-height: 8rem; }
+.btn { min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }
+.table > :not(caption) > * > * { vertical-align: middle; }
+.text-clamp { max-width: 32rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+
+@media (max-width: 767.98px) {
+  .table-responsive { border-radius: .75rem; }
+  .desktop-only { display: none; }
+  .actions .btn { flex: 1 1 7rem; }
+}
+
+@media (min-width: 768px) and (max-width: 1024px) {
+  .container-xl { max-width: 960px; }
+  .table { font-size: .95rem; }
+}

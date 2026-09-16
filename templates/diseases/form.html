@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-10">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+      <h1 class="h2 mb-0">{{ title }}</h1>
+      <a class="btn btn-outline-secondary" href="{{ url_for('disease_list') }}">رجوع</a>
+    </div>
+    <form method="post" class="card border-0 shadow-sm" novalidate>
+      <div class="card-body p-4">
+        {{ form.hidden_tag() }}
+        <div class="row g-3">
+          {% for field in [form.name_ar, form.name_en, form.system, form.importance, form.week_number, form.image_url] %}
+          <div class="col-12 {% if field.name in ['name_ar','name_en','importance','week_number'] %}col-md-6{% endif %}">
+            {{ field.label(class="form-label fw-semibold") }}
+            {{ field(class="form-control") }}
+            {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+          {% for field in [form.definition, form.etiology, form.symptoms, form.diagnosis, form.treatment] %}
+          <div class="col-12">
+            {{ field.label(class="form-label fw-semibold") }}
+            {{ field(class="form-control", rows="5") }}
+            {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="card-footer bg-white border-0 p-4 pt-0">
+        {{ form.submit(class="btn btn-primary btn-lg px-5") }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

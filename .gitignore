@@ -1,0 +1,40 @@
+# Node rules:
+## Grunt intermediate storage (http://gruntjs.com/creating-plugins#storing-task-files)
+.grunt
+
+# أسرار وبيئات محلية
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+## Dependency directory
+## Commenting this out is preferred by some people, see
+## https://docs.npmjs.com/misc/faq#should-i-check-my-node_modules-folder-into-git
+node_modules
+
+# ملفات التسليم والسجلات وقواعد البيانات المحلية
+*.zip
+*.log
+*.sqlite
+*.sqlite3
+build/
+dist/
+
+# Book build output
+_book
+
+# eBook build output
+*.epub
+*.mobi
+*.pdf

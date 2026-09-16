@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: arabic-medical-bot
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: APP_ENV
+        value: production
+      - key: BOT_MODE
+        value: webhook
+      - key: TIMEZONE
+        value: Asia/Jerusalem
+      - key: DAILY_POST_TIME
+        value: "08:00"
+      - key: SESSION_COOKIE_SECURE
+        value: "true"
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      - key: SCHEDULER_SECRET
+        generateValue: true

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}لوحة المعلومات{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-3 mb-4">
+  <div>
+    <h1 class="h2 mb-1">لوحة المعلومات</h1>
+    <p class="text-secondary mb-0">ملخص محتوى البوت والمشتركين النشطين.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-primary" href="{{ url_for('disease_create') }}">إضافة مرض</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('question_create') }}">إضافة سؤال</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-sm-4">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">الأمراض</div>
+      <div class="stat-value">{{ stats.diseases }}</div>
+    </div>
+  </div>
+  <div class="col-12 col-sm-4">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">الأسئلة</div>
+      <div class="stat-value">{{ stats.questions }}</div>
+    </div>
+  </div>
+  <div class="col-12 col-sm-4">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">المشتركون النشطون</div>
+      <div class="stat-value">{{ stats.subscribers }}</div>
+    </div>
+  </div>
+</div>
+
+<section class="card border-0 shadow-sm mt-4">
+  <div class="card-body p-4">
+    <h2 class="h5">تنبيه المحتوى</h2>
+    <p class="mb-0 text-secondary">تأكد من مراجعة أي محتوى جديد طبيًا قبل نشره. لا تستخدم النظام لحفظ حالات مرضى أو أعراض أو تقارير فردية.</p>
+  </div>
+</section>
+{% endblock %}
