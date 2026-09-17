@@ -134,6 +134,8 @@ def test_public_topics_returns_only_allowlisted_fields_with_cors_and_cache():
 
     cached = client.get("/api/public/topics", headers={"If-None-Match": response.headers["ETag"]})
     assert cached.status_code == 304
+    weak_cached = client.get("/api/public/topics", headers={"If-None-Match": f"W/{response.headers['ETag']}"})
+    assert weak_cached.status_code == 304
 
 
 def test_public_topics_fails_closed_with_generic_error():

@@ -176,7 +176,7 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
             )
 
         etag = public_topics_cache["etag"]
-        if etag and request.if_none_match.contains(etag):
+        if etag and request.if_none_match.contains_weak(etag):
             response = app.response_class(status=HTTPStatus.NOT_MODIFIED)
         else:
             response = jsonify(payload)
