@@ -491,6 +491,9 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
 
     @app.errorhandler(CSRFError)
     def csrf_error(_error):
+        if request.endpoint == "login" and request.method == "POST":
+            flash("انتهت صلاحية صفحة الدخول. افتح النموذج الجديد وحاول مرة أخرى.", "warning")
+            return redirect(url_for("login"))
         return render_template("error.html", message="انتهت صلاحية النموذج. أعد تحميل الصفحة وحاول مرة أخرى."), 400
 
     @app.errorhandler(404)

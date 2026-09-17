@@ -104,8 +104,11 @@ def test_login_post_without_csrf_is_rejected_when_protection_is_enabled():
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=True)
     client = app.test_client()
     response = client.post("/login", data={"username": "admin", "password": "admin123"})
-    assert response.status_code == 400
-    assert "انتهت صلاحية النموذج".encode() in response.data
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login")
+    refreshed = client.get(response.headers["Location"])
+    assert refreshed.status_code == 200
+    assert "انتهت صلاحية صفحة الدخول".encode() in refreshed.data
 
 
 def test_login_with_real_csrf_token_succeeds():
