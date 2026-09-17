@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import secrets
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
+from analytics import (
+    aggregate_usage_rows,
+    completed_week,
+    normalize_usage_event,
+    previous_period,
+)
 from supabase import Client, create_client
 
 
@@ -208,3 +214,158 @@ class Database:
             if code == "23505" or "duplicate key" in message or "unique" in message:
                 return False
             raise DatabaseError("تعذر حجز النشر اليومي.") from exc
+
+    def record_usage_event(
+        self,
+        metric_date: date,
+        event_type: str,
+        topic_id: str | None = None,
+    ) -> None:
+        """زيادة عداد يومي مجمع؛ لا تستقبل الدالة أي معرف مستخدم أو نص حر."""
+        normalized_event, normalized_topic = normalize_usage_event(event_type, topic_id)
+        try:
+            self.client.rpc(
+                "increment_usage_metric",
+                {
+                    "p_metric_date": metric_date.isoformat(),
+                    "p_event_type": normalized_event,
+                    "p_topic_id": normalized_topic,
+                },
+            ).execute()
+        except Exception as exc:
+            raise DatabaseError("تعذر تحديث عداد الاستخدام.") from exc
+
+    def get_usage_rows(self, start_date: date, end_date: date) -> list[dict[str, Any]]:
+        """قراءة العدادات المجمعة داخل فترة محددة فقط."""
+        if end_date < start_date:
+            raise ValueError("نهاية الفترة تسبق بدايتها.")
+        try:
+            response = (
+                self.client.table("usage_daily_metrics")
+                .select("metric_date,event_type,topic_id,event_count")
+                .gte("metric_date", start_date.isoformat())
+                .lte("metric_date", end_date.isoformat())
+                .order("metric_date")
+                .execute()
+            )
+            return response.data or []
+        except Exception as exc:
+            raise DatabaseError("تعذر تحميل عدادات الاستخدام.") from exc
+
+    def get_usage_report(self, start_date: date, end_date: date) -> dict[str, Any]:
+        """تجميع تقرير فترة من عدادات مجهولة الهوية."""
+        rows = self.get_usage_rows(start_date, end_date)
+        return aggregate_usage_rows(rows, start_date, end_date)
+
+    def get_usage_dashboard(self, reference_date: date) -> dict[str, Any]:
+        """إرجاع مؤشرات 7 و30 يومًا ومقارنة الأسبوع السابق للوحة الإدارة."""
+        start_30 = reference_date - timedelta(days=29)
+        start_14 = reference_date - timedelta(days=13)
+        start_7 = reference_date - timedelta(days=6)
+        previous_end = start_7 - timedelta(days=1)
+        rows = self.get_usage_rows(start_30, reference_date)
+        return {
+            "last_7": aggregate_usage_rows(rows, start_7, reference_date),
+            "previous_7": aggregate_usage_rows(rows, start_14, previous_end),
+            "last_30": aggregate_usage_rows(rows, start_30, reference_date),
+        }
+
+    def get_completed_week_reports(self, reference_date: date) -> tuple[dict[str, Any], dict[str, Any]]:
+        """إرجاع الأسبوع المكتمل السابق والفترة السابقة المساوية له."""
+        current_start, current_end = completed_week(reference_date)
+        previous_start, previous_end = previous_period(current_start, current_end)
+        rows = self.get_usage_rows(previous_start, current_end)
+        return (
+            aggregate_usage_rows(rows, current_start, current_end),
+            aggregate_usage_rows(rows, previous_start, previous_end),
+        )
+
+    def create_report_link_token(self, token_hash: str, expires_at: datetime) -> None:
+        """حفظ بصمة رمز ربط مؤقت؛ لا يُحفظ الرمز الخام."""
+        if len(token_hash) != 64 or any(character not in "0123456789abcdef" for character in token_hash):
+            raise ValueError("بصمة رمز الربط غير صالحة.")
+        payload = {
+            "id": 1,
+            "link_token_hash": token_hash,
+            "link_token_expires_at": expires_at.astimezone(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            self.client.table("report_delivery_config").upsert(payload, on_conflict="id").execute()
+        except Exception as exc:
+            raise DatabaseError("تعذر إنشاء رمز ربط التقرير.") from exc
+
+    def consume_report_link_token(self, token_hash: str, chat_id: int) -> bool:
+        """استهلاك رمز ربط مرة واحدة وتعيين مستلم التقرير إداريًا."""
+        if len(token_hash) != 64 or any(character not in "0123456789abcdef" for character in token_hash):
+            return False
+        try:
+            response = self.client.rpc(
+                "consume_report_link_token",
+                {"p_token_hash": token_hash, "p_chat_id": int(chat_id)},
+            ).execute()
+            return response.data is True or response.data == [True]
+        except Exception as exc:
+            raise DatabaseError("تعذر ربط مستلم التقرير.") from exc
+
+    def get_report_delivery_config(self) -> dict[str, Any] | None:
+        """قراءة إعداد التوصيل دون إعادة بصمة الرمز المؤقت."""
+        try:
+            response = (
+                self.client.table("report_delivery_config")
+                .select("telegram_chat_id,linked_at")
+                .eq("id", 1)
+                .limit(1)
+                .execute()
+            )
+            return self._first(response.data)
+        except Exception as exc:
+            raise DatabaseError("تعذر تحميل إعداد توصيل التقرير.") from exc
+
+    def claim_weekly_report(self, week_start: date) -> bool:
+        """حجز تقرير أسبوعي مرة واحدة قبل إرساله."""
+        try:
+            self.client.table("weekly_report_deliveries").insert(
+                {"week_start": week_start.isoformat(), "status": "pending"}
+            ).execute()
+            return True
+        except Exception as exc:
+            code = getattr(exc, "code", "")
+            message = str(exc).lower()
+            if code == "23505" or "duplicate key" in message or "unique" in message:
+                return False
+            raise DatabaseError("تعذر حجز التقرير الأسبوعي.") from exc
+
+    def complete_weekly_report(self, week_start: date, total_interactions: int) -> None:
+        """تسجيل نجاح إرسال التقرير الأسبوعي."""
+        try:
+            self.client.table("weekly_report_deliveries").update(
+                {
+                    "status": "sent",
+                    "sent_at": datetime.now(timezone.utc).isoformat(),
+                    "total_interactions": max(0, int(total_interactions)),
+                }
+            ).eq("week_start", week_start.isoformat()).execute()
+        except Exception as exc:
+            raise DatabaseError("تعذر إكمال سجل التقرير الأسبوعي.") from exc
+
+    def release_weekly_report(self, week_start: date) -> None:
+        """تحرير الحجز بعد فشل الإرسال للسماح بمحاولة لاحقة."""
+        try:
+            self.client.table("weekly_report_deliveries").delete().eq(
+                "week_start", week_start.isoformat()
+            ).eq("status", "pending").execute()
+        except Exception as exc:
+            raise DatabaseError("تعذر تحرير حجز التقرير الأسبوعي.") from exc
+
+    def prune_usage_data(self, reference_date: date) -> None:
+        """حذف العدادات الأقدم من 400 يوم وسجلات التقارير الأقدم من 420 يومًا."""
+        try:
+            self.client.table("usage_daily_metrics").delete().lt(
+                "metric_date", (reference_date - timedelta(days=400)).isoformat()
+            ).execute()
+            self.client.table("weekly_report_deliveries").delete().lt(
+                "week_start", (reference_date - timedelta(days=420)).isoformat()
+            ).execute()
+        except Exception as exc:
+            raise DatabaseError("تعذر تطبيق سياسة احتفاظ التحليلات.") from exc

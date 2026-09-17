@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}تقرير تفاعل البوت{% endblock %}
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-4">
+  <div>
+    <h1 class="h2 mb-1">تقرير تفاعل البوت</h1>
+    <p class="text-secondary mb-0">عدادات يومية مجمعة منذ تفعيل القياس؛ لا تتضمن معرفات مستخدمين أو نصوص رسائل.</p>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <form method="post" action="{{ url_for('analytics_link_token') }}" class="m-0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-primary" type="submit">إنشاء رمز ربط Telegram</button>
+    </form>
+    <form method="post" action="{{ url_for('analytics_send_test') }}" class="m-0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit" {% if not delivery or not delivery.telegram_chat_id %}disabled{% endif %}>إرسال تقرير اختباري</button>
+    </form>
+  </div>
+</div>
+
+<div class="alert {{ 'alert-success' if delivery and delivery.telegram_chat_id else 'alert-warning' }}" role="status">
+  {% if delivery and delivery.telegram_chat_id %}
+    التقرير الأسبوعي مرتبط بمحادثة Telegram إدارية. موعده صباح الأحد بعد مهمة النشر اليومية.
+  {% else %}
+    لم تُربط محادثة إدارية بعد. أنشئ رمزًا ثم أرسله إلى البوت من المحادثة الخاصة.
+  {% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">تفاعلات آخر 7 أيام</div>
+      <div class="stat-value">{{ analytics.last_7.total_interactions }}</div>
+      <div class="small text-secondary">
+        {% if weekly_growth is none %}لا توجد مقارنة سابقة{% elif weekly_growth > 0 %}+{{ weekly_growth }}% عن الأسبوع السابق{% else %}{{ weekly_growth }}% عن الأسبوع السابق{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">مشاهدات الموضوعات</div>
+      <div class="stat-value">{{ analytics.last_7.topic_views }}</div>
+      <div class="small text-secondary">خلال 7 أيام</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">إجابات الاختبار الإنجليزي</div>
+      <div class="stat-value">{{ analytics.last_7.quiz_answered }}</div>
+      <div class="small text-secondary">بدأ {{ analytics.last_7.quiz_started }} اختبارًا</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="stat-card bg-white shadow-sm h-100">
+      <div class="stat-label">دقة الإجابات</div>
+      <div class="stat-value">{{ analytics.last_7.quiz_accuracy if analytics.last_7.quiz_accuracy is not none else '—' }}{% if analytics.last_7.quiz_accuracy is not none %}%{% endif %}</div>
+      <div class="small text-secondary">لا تُحفظ إجابات فردية</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-12 col-xl-7">
+    <section class="card border-0 shadow-sm h-100">
+      <div class="card-body p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2 class="h5 mb-0">النشاط اليومي — 30 يومًا</h2>
+          <span class="badge text-bg-light">{{ analytics.last_30.total_interactions }} تفاعلًا</span>
+        </div>
+        <div class="analytics-daily-list">
+          {% set max_count = analytics.last_30.daily | map(attribute='count') | max if analytics.last_30.daily else 1 %}
+          {% for day in analytics.last_30.daily %}
+          <div class="analytics-day-row">
+            <time datetime="{{ day.date }}">{{ day.date }}</time>
+            <progress class="analytics-progress" value="{{ day.count }}" max="{{ max_count if max_count > 0 else 1 }}">{{ day.count }}</progress>
+            <strong>{{ day.count }}</strong>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="col-12 col-xl-5">
+    <section class="card border-0 shadow-sm mb-4">
+      <div class="card-body p-4">
+        <h2 class="h5">أكثر الموضوعات مشاهدة — 30 يومًا</h2>
+        {% if analytics.last_30.top_topics %}
+        <ol class="list-group list-group-numbered list-group-flush">
+          {% for topic in analytics.last_30.top_topics %}
+          <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+            <span>{{ topic.name_en }} <span class="text-secondary">| {{ topic.name_ar }}</span></span>
+            <span class="badge text-bg-primary rounded-pill">{{ topic.views }}</span>
+          </li>
+          {% endfor %}
+        </ol>
+        {% else %}
+        <p class="text-secondary mb-0">لا توجد مشاهدات مسجلة بعد.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h5">تفاصيل آخر 30 يومًا</h2>
+        <dl class="row mb-0 analytics-definition-list">
+          <dt class="col-7">فتح الشرح الموسع</dt><dd class="col-5">{{ analytics.last_30.detail_views }}</dd>
+          <dt class="col-7">فتح المراجع</dt><dd class="col-5">{{ analytics.last_30.sources_views }}</dd>
+          <dt class="col-7">عمليات البحث</dt><dd class="col-5">{{ analytics.last_30.searches }}</dd>
+          <dt class="col-7">نجاح البحث</dt><dd class="col-5">{{ analytics.last_30.search_success_rate if analytics.last_30.search_success_rate is not none else '—' }}{% if analytics.last_30.search_success_rate is not none %}%{% endif %}</dd>
+          <dt class="col-7">إجابات صحيحة</dt><dd class="col-5">{{ analytics.last_30.quiz_correct }}</dd>
+        </dl>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="alert alert-light border mt-4 mb-0">
+  <strong>حدود التقرير:</strong> لا يعرض عدد المستخدمين الفريدين لأن النظام لا يخزن معرفاتهم ضمن أحداث التفاعل. تبدأ الأرقام من تاريخ نشر هذه الميزة ولا تستعيد نشاطًا تاريخيًا سابقًا.
+</div>
+{% endblock %}

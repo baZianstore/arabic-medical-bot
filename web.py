@@ -6,10 +6,11 @@ import hashlib
 import hmac
 import json
 import logging
+import secrets
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from http import HTTPStatus
 from typing import Any, TypeVar
@@ -30,7 +31,12 @@ from flask_wtf.csrf import CSRFError, CSRFProtect
 from telegram import Update
 from telegram.ext import Application
 
-from bot import publish_daily_content
+from analytics import growth_percentage
+from bot import (
+    maybe_send_weekly_usage_report,
+    publish_daily_content,
+    send_weekly_usage_report,
+)
 from config import Settings
 from database import Database, DatabaseError
 from forms import DeleteForm, DiseaseForm, LoginForm, QuestionForm
@@ -233,6 +239,74 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
             logger.exception("فشل تحميل لوحة المعلومات.")
             return render_template("error.html", message="تعذر تحميل الإحصاءات مؤقتًا."), 503
 
+    @app.get("/analytics")
+    @login_required
+    def analytics_dashboard():
+        """عرض عدادات مجمعة فقط للمشرف."""
+        try:
+            local_date = datetime.now(settings.timezone).date()
+            analytics = database.get_usage_dashboard(local_date)
+            delivery = database.get_report_delivery_config()
+            weekly_growth = growth_percentage(
+                analytics["last_7"]["total_interactions"],
+                analytics["previous_7"]["total_interactions"],
+            )
+            return render_template(
+                "analytics.html",
+                analytics=analytics,
+                delivery=delivery,
+                weekly_growth=weekly_growth,
+            )
+        except DatabaseError:
+            logger.exception("فشل تحميل تقرير التفاعل المجمع.")
+            return render_template("error.html", message="تعذر تحميل تقرير التفاعل مؤقتًا."), 503
+
+    @app.post("/analytics/link-token")
+    @login_required
+    def analytics_link_token():
+        """إصدار رمز لمرة واحدة مع حفظ بصمته فقط في قاعدة البيانات."""
+        raw_token = secrets.token_urlsafe(24)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+        try:
+            database.create_report_link_token(token_hash, expires_at)
+        except DatabaseError:
+            flash("تعذر إنشاء رمز الربط مؤقتًا.", "danger")
+            return redirect(url_for("analytics_dashboard"))
+        return render_template(
+            "analytics_link.html",
+            command=f"/link_report {raw_token}",
+            expires_at=expires_at,
+        )
+
+    @app.post("/analytics/send-test")
+    @login_required
+    def analytics_send_test():
+        """إرسال تقرير اختباري إلى المستلم المرتبط فقط."""
+        if bot_application is None:
+            abort(503)
+        try:
+            result = app.ensure_sync(send_weekly_usage_report)(
+                bot_application.bot, database, now=datetime.now(settings.timezone), test=True
+            )
+        except DatabaseError:
+            logger.exception("فشل تجهيز التقرير الاختباري.")
+            flash("تعذر تجهيز التقرير الاختباري مؤقتًا.", "danger")
+        else:
+            if result.get("sent"):
+                flash("أُرسل التقرير الاختباري إلى محادثة Telegram المرتبطة.", "success")
+            elif result.get("reason") == "not_linked":
+                flash("اربط محادثة Telegram أولًا ثم أعد المحاولة.", "warning")
+            else:
+                flash("تعذر إرسال التقرير الاختباري عبر Telegram.", "danger")
+        return redirect(url_for("analytics_dashboard"))
+
+    @app.get("/analytics/open-bot")
+    @login_required
+    def analytics_open_bot():
+        """تحويل إداري واضح إلى البوت دون تضمين نطاق خارجي في القالب."""
+        return redirect("https://t.me/Intmed_edu_bot", code=302)
+
     @app.get("/diseases")
     @login_required
     def disease_list():
@@ -404,6 +478,11 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
                 database,
                 now=local_now,
                 settings=settings,
+            )
+            result["weekly_report"] = await maybe_send_weekly_usage_report(
+                bot_application.bot,
+                database,
+                now=local_now,
             )
             return jsonify(result)
         except DatabaseError:

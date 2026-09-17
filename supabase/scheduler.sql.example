@@ -1,0 +1,33 @@
+-- قالب اختياري لإعادة إنشاء المجدول في مشروع Supabase جديد.
+-- استبدل YOUR_RANDOM_SCHEDULER_SECRET بالقيمة نفسها في Render، ثم نفّذ الملف مرة واحدة.
+-- لا تحفظ النسخة التي تحتوي السر في Git أو تشاركها.
+
+create extension if not exists pg_cron with schema pg_catalog;
+create extension if not exists pg_net with schema extensions;
+
+select vault.create_secret(
+    'YOUR_RANDOM_SCHEDULER_SECRET',
+    'medical_bot_scheduler_secret',
+    'Render scheduler bearer token'
+);
+
+select cron.schedule(
+    'medical-bot-daily-trigger',
+    '0 5,6 * * *',
+    $job$
+    select net.http_post(
+        url := 'https://arabic-medical-bot.onrender.com/tasks/daily-publish',
+        headers := jsonb_build_object(
+            'Content-Type', 'application/json',
+            'Authorization', 'Bearer ' || (
+                select decrypted_secret
+                from vault.decrypted_secrets
+                where name = 'medical_bot_scheduler_secret'
+                limit 1
+            )
+        ),
+        body := '{}'::jsonb,
+        timeout_milliseconds := 120000
+    ) as request_id;
+    $job$
+);

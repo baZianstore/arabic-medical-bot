@@ -33,9 +33,32 @@ def test_seed_contains_five_diseases_and_fifteen_questions():
 def test_schema_denies_public_roles_and_enables_rls():
     sql = Path("schema.sql").read_text(encoding="utf-8").lower()
     assert "alter default privileges for role postgres" in sql
-    for table in ("diseases", "questions", "subscribers", "daily_publications"):
+    for table in (
+        "diseases",
+        "questions",
+        "subscribers",
+        "daily_publications",
+        "usage_daily_metrics",
+        "report_delivery_config",
+        "weekly_report_deliveries",
+    ):
         assert f"alter table public.{table} enable row level security" in sql
-        assert f"revoke all on table public.{table} from anon, authenticated" in sql
+        assert f"revoke all on table public.{table}" in sql
+        assert "anon, authenticated" in sql
+
+
+def test_analytics_schema_is_aggregate_only_and_functions_are_service_role_only():
+    sql = Path("schema.sql").read_text(encoding="utf-8").lower()
+    metrics_block = sql.split("create table if not exists public.usage_daily_metrics", 1)[1].split(
+        "create table if not exists public.report_delivery_config", 1
+    )[0]
+    for forbidden in ("user_id", "chat_id", "username", "message", "query_text", "answer_text"):
+        assert forbidden not in metrics_block
+    assert "security invoker" in sql
+    assert "revoke all on function public.increment_usage_metric" in sql
+    assert "revoke all on function public.consume_report_link_token" in sql
+    assert "grant execute on function public.increment_usage_metric(date, text, text) to service_role" in sql
+    assert "grant execute on function public.consume_report_link_token(text, bigint) to service_role" in sql
 
 
 def test_webhook_rejects_wrong_secret_before_processing_payload():

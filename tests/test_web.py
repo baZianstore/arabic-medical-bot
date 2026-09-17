@@ -1,9 +1,11 @@
 """اختبارات تكامل Flask ببيانات اصطناعية فقط."""
 
 import re
-from datetime import time
+from datetime import date, time
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+from analytics import aggregate_usage_rows
 from config import Settings
 from database import DatabaseError
 from web import create_web_app
@@ -11,6 +13,8 @@ from web import create_web_app
 
 class FakeDatabase:
     deleted_disease = None
+    link_token_hash = None
+    report_linked = True
 
     def get_stats(self): return {"diseases": 2, "questions": 6, "subscribers": 3}
     def list_diseases(self): return []
@@ -31,6 +35,41 @@ class FakeDatabase:
         ]
     def get_disease(self, disease_id): return {"id": disease_id, "name_ar": "مرض اصطناعي"}
     def delete_disease(self, disease_id): self.deleted_disease = disease_id
+    def get_usage_dashboard(self, reference_date):
+        current = aggregate_usage_rows(
+            [
+                {
+                    "metric_date": reference_date.isoformat(),
+                    "event_type": "topic_view",
+                    "topic_id": "asthma",
+                    "event_count": 5,
+                }
+            ],
+            reference_date,
+            reference_date,
+        )
+        previous = aggregate_usage_rows([], reference_date, reference_date)
+        return {"last_7": current, "previous_7": previous, "last_30": current}
+    def get_report_delivery_config(self):
+        if not self.report_linked:
+            return None
+        return {"telegram_chat_id": 123456, "linked_at": "2026-09-17T00:00:00Z"}
+    def create_report_link_token(self, token_hash, _expires_at): self.link_token_hash = token_hash
+    def get_completed_week_reports(self, _reference_date):
+        current = aggregate_usage_rows(
+            [
+                {"metric_date": "2026-09-16", "event_type": "topic_view", "topic_id": "asthma", "event_count": 2}
+            ],
+            date(2026, 9, 13),
+            date(2026, 9, 19),
+        )
+        previous = aggregate_usage_rows([], date(2026, 9, 6), date(2026, 9, 12))
+        return current, previous
+
+
+class FakeBot:
+    def __init__(self): self.messages = []
+    async def send_message(self, **kwargs): self.messages.append(kwargs)
 
 
 def settings():
@@ -88,6 +127,13 @@ def test_login_with_real_csrf_token_succeeds():
 def test_dashboard_denies_anonymous_user():
     client = create_client()
     response = client.get("/dashboard")
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/login")
+
+
+def test_analytics_denies_anonymous_user():
+    client = create_client()
+    response = client.get("/analytics")
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/login")
 
@@ -173,3 +219,45 @@ def test_delete_disease_requires_confirmation_page_then_post():
     result = client.post(f"/diseases/{disease_id}/delete")
     assert result.status_code == 302
     assert database.deleted_disease == disease_id
+
+
+def test_admin_analytics_page_contains_aggregates_without_user_identifiers():
+    client = create_client()
+    client.post("/login", data={"username": "admin", "password": "admin123"})
+    response = client.get("/analytics")
+    assert response.status_code == 200
+    assert "تقرير تفاعل البوت".encode() in response.data
+    assert b"Asthma" in response.data
+    assert b"user_id" not in response.data
+    assert b"telegram_chat_id" not in response.data
+
+
+def test_link_token_page_shows_raw_token_once_but_database_receives_hash_only():
+    database = FakeDatabase()
+    app = create_web_app(settings(), database)
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    client = app.test_client()
+    client.post("/login", data={"username": "admin", "password": "admin123"})
+    response = client.post("/analytics/link-token")
+    assert response.status_code == 200
+    command = re.search(rb"/link_report ([A-Za-z0-9_-]{24,64})", response.data)
+    assert command is not None
+    raw_token = command.group(1).decode()
+    assert database.link_token_hash is not None
+    assert len(database.link_token_hash) == 64
+    assert raw_token not in database.link_token_hash
+
+
+def test_send_test_report_requires_admin_and_uses_linked_chat():
+    database = FakeDatabase()
+    bot = FakeBot()
+    app = create_web_app(settings(), database, SimpleNamespace(bot=bot))
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    client = app.test_client()
+    assert client.post("/analytics/send-test").status_code == 302
+    client.post("/login", data={"username": "admin", "password": "admin123"})
+    response = client.post("/analytics/send-test", follow_redirects=True)
+    assert response.status_code == 200
+    assert "أُرسل التقرير الاختباري".encode() in response.data
+    assert len(bot.messages) == 1
+    assert bot.messages[0]["chat_id"] == 123456

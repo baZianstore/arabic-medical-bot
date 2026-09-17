@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import logging
+import re
 import secrets
 from datetime import datetime
 from typing import Any
@@ -14,6 +16,7 @@ from telegram.constants import ParseMode
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
+from analytics import format_weekly_usage_report
 from bilingual_content import (
     BILINGUAL_TOPICS,
     all_bilingual_topics,
@@ -24,6 +27,7 @@ from database import Database, DatabaseError
 
 logger = logging.getLogger(__name__)
 TELEGRAM_SAFE_MESSAGE_LIMIT = 3900
+REPORT_LINK_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{24,64}$")
 
 WELCOME_TEXT = (
     "<b>Clinical English | التعليم الطبي الثنائي</b>\n\n"
@@ -249,6 +253,21 @@ async def _database_call(func: Any, *args: Any) -> Any:
     return await asyncio.to_thread(func, *args)
 
 
+async def _record_usage(
+    context: ContextTypes.DEFAULT_TYPE,
+    event_type: str,
+    topic_id: str | None = None,
+) -> None:
+    """تسجيل عداد يومي مجمع دون معرف مستخدم أو نص رسالة."""
+    database: Database = context.application.bot_data["database"]
+    settings: Settings = context.application.bot_data["settings"]
+    metric_date = datetime.now(settings.timezone).date()
+    try:
+        await _database_call(database.record_usage_event, metric_date, event_type, topic_id)
+    except (DatabaseError, ValueError):
+        logger.warning("تعذر تحديث عداد استخدام مجمع event=%s.", event_type)
+
+
 async def _send_topic_card(message: Any, topic: dict[str, Any], settings: Settings | None) -> None:
     """إرسال الصورة ثم الملخص؛ فشل الصورة لا يمنع وصول المحتوى."""
     image_url = _topic_image_url(topic, settings)
@@ -267,11 +286,12 @@ async def _send_topic_card(message: Any, topic: dict[str, Any], settings: Settin
     await message.reply_text(summary, parse_mode=ParseMode.HTML, reply_markup=topic_actions_keyboard(topic))
 
 
-async def _send_random_bilingual_quiz(message: Any) -> None:
+async def _send_random_bilingual_quiz(message: Any) -> str:
     """اختيار سؤال إنجليزي عشوائي من البطاقات المراجعة."""
     topic = secrets.choice(all_bilingual_topics())
     text, keyboard = format_bilingual_question(topic)
     await message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    return str(topic["id"])
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -290,6 +310,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=ParseMode.HTML,
         reply_markup=main_menu_keyboard(),
     )
+    await _record_usage(context, "start")
 
 
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -300,6 +321,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(),
         )
+        await _record_usage(context, "menu_open")
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -310,6 +332,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(),
         )
+        await _record_usage(context, "help_view")
 
 
 async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -327,8 +350,10 @@ async def today_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         topic = _topic_for_disease(disease)
         if topic:
             await _send_topic_card(update.effective_message, topic, settings)
+            await _record_usage(context, "today_view", str(topic["id"]))
         else:
             await update.effective_message.reply_text(format_disease(disease), parse_mode=ParseMode.HTML)
+            await _record_usage(context, "today_view")
     except DatabaseError:
         logger.exception("فشل تحميل مرض اليوم.")
         await update.effective_message.reply_text("تعذر تحميل مرض اليوم مؤقتًا. حاول لاحقًا.")
@@ -354,6 +379,7 @@ async def learn_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     settings: Settings = context.application.bot_data["settings"]
     await _send_topic_card(update.effective_message, topic, settings)
+    await _record_usage(context, "topic_view", str(topic["id"]))
 
 
 async def sources_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -382,6 +408,7 @@ async def sources_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         disable_web_page_preview=True,
         reply_markup=reference_keyboard(topic),
     )
+    await _record_usage(context, "sources_view", str(topic["id"]))
 
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -398,12 +425,14 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         results = await _database_call(database.search_diseases, query)
         if not results:
             await update.effective_message.reply_text("لم أجد مرضًا بهذا الاسم. جرّب كلمة أقصر أو الاسم الإنجليزي.")
+            await _record_usage(context, "search_empty")
         elif len(results) == 1:
             topic = _topic_for_disease(results[0])
             if topic:
                 await _send_topic_card(update.effective_message, topic, settings)
             else:
                 await update.effective_message.reply_text(format_disease(results[0]), parse_mode=ParseMode.HTML)
+            await _record_usage(context, "search_success")
         else:
             names = "\n".join(
                 f"• {html.escape(str(item['name_ar']))} — {html.escape(str(item['name_en']))}" for item in results
@@ -411,6 +440,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.effective_message.reply_text(
                 f"<b>النتائج:</b>\n{names}\n\nأعد البحث باسم أكثر تحديدًا.", parse_mode=ParseMode.HTML
             )
+            await _record_usage(context, "search_success")
     except DatabaseError:
         logger.exception("فشل البحث في المحتوى.")
         await update.effective_message.reply_text("تعذر البحث مؤقتًا. حاول لاحقًا.")
@@ -428,6 +458,7 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             return
         text, keyboard = format_question(question)
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+        await _record_usage(context, "quiz_ar_started")
     except DatabaseError:
         logger.exception("فشل تحميل الاختبار.")
         await update.effective_message.reply_text("تعذر تحميل سؤال الآن. حاول لاحقًا.")
@@ -436,7 +467,8 @@ async def quiz_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def quiz_en_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """إرسال سؤال إنجليزي مع شرح عربي بعد الإجابة."""
     if update.effective_message:
-        await _send_random_bilingual_quiz(update.effective_message)
+        topic_id = await _send_random_bilingual_quiz(update.effective_message)
+        await _record_usage(context, "quiz_en_started", topic_id)
 
 
 async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -467,6 +499,9 @@ async def quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if query.message:
             await query.edit_message_reply_markup(reply_markup=None)
             await query.message.reply_text(f"<b>{result}</b>\n\n{explanation}", parse_mode=ParseMode.HTML)
+        await _record_usage(context, "quiz_ar_answered")
+        if selected == correct:
+            await _record_usage(context, "quiz_ar_correct")
     except DatabaseError:
         logger.exception("فشل تصحيح سؤال الاختبار.")
         if query.message:
@@ -509,6 +544,9 @@ async def bilingual_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TY
                 ]
             ),
         )
+    await _record_usage(context, "quiz_en_answered", topic_id)
+    if selected == correct:
+        await _record_usage(context, "quiz_en_correct", topic_id)
 
 
 async def topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -523,6 +561,7 @@ async def topic_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     settings: Settings = context.application.bot_data["settings"]
     await _send_topic_card(query.message, topic, settings)
+    await _record_usage(context, "topic_view", str(topic["id"]))
 
 
 async def detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -537,6 +576,7 @@ async def detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     _, details = format_bilingual_topic(topic)
     await query.message.reply_text(details, parse_mode=ParseMode.HTML, reply_markup=topic_actions_keyboard(topic))
+    await _record_usage(context, "topic_detail_view", str(topic["id"]))
 
 
 async def references_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -555,6 +595,7 @@ async def references_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         disable_web_page_preview=True,
         reply_markup=reference_keyboard(topic),
     )
+    await _record_usage(context, "sources_view", str(topic["id"]))
 
 
 async def new_quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -569,6 +610,7 @@ async def new_quiz_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     text, keyboard = format_bilingual_question(topic)
     await query.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=keyboard)
+    await _record_usage(context, "quiz_en_started", str(topic["id"]))
 
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -581,19 +623,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if action == "today":
         await today_command(update, context)
     elif action == "quiz_en":
-        await _send_random_bilingual_quiz(query.message)
+        topic_id = await _send_random_bilingual_quiz(query.message)
+        await _record_usage(context, "quiz_en_started", topic_id)
     elif action == "topics":
         await query.message.reply_text("Choose a topic | اختر موضوعًا", reply_markup=topic_selection_keyboard())
+        await _record_usage(context, "menu_open")
     elif action == "stats":
         await stats_command(update, context)
     elif action == "help":
         await query.message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML, reply_markup=main_menu_keyboard())
+        await _record_usage(context, "help_view")
     else:
         await query.message.reply_text(
             "<b>Main menu | القائمة الرئيسية</b>",
             parse_mode=ParseMode.HTML,
             reply_markup=main_menu_keyboard(),
         )
+        await _record_usage(context, "menu_open")
 
 
 async def systems_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -608,6 +654,7 @@ async def systems_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await update.effective_message.reply_text("لا توجد أجهزة طبية مسجلة حاليًا.")
             return
         await update.effective_message.reply_text("الأجهزة والتخصصات المتاحة:\n" + "\n".join(f"• {s}" for s in systems))
+        await _record_usage(context, "systems_view")
     except DatabaseError:
         logger.exception("فشل تحميل الأجهزة الطبية.")
         await update.effective_message.reply_text("تعذر تحميل القائمة مؤقتًا.")
@@ -628,9 +675,108 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             f"• Active subscribers | المشتركون النشطون: {stats['subscribers']}",
             parse_mode=ParseMode.HTML,
         )
+        await _record_usage(context, "stats_view")
     except DatabaseError:
         logger.exception("فشل تحميل الإحصاءات.")
         await update.effective_message.reply_text("تعذر تحميل الإحصاءات مؤقتًا.")
+
+
+async def link_report_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ربط المحادثة الخاصة كمستلم إداري بواسطة رمز لمرة واحدة."""
+    if not update.effective_message or not update.effective_chat:
+        return
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("يجب تنفيذ ربط التقرير في محادثة خاصة مع البوت.")
+        return
+    raw_token = context.args[0].strip() if len(context.args) == 1 else ""
+    if not REPORT_LINK_TOKEN_PATTERN.fullmatch(raw_token):
+        await update.effective_message.reply_text("رمز الربط غير صالح أو ناقص.")
+        return
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    database: Database = context.application.bot_data["database"]
+    try:
+        linked = await _database_call(
+            database.consume_report_link_token,
+            token_hash,
+            update.effective_chat.id,
+        )
+    except DatabaseError:
+        logger.exception("فشل ربط مستلم التقرير دون تسجيل معرف المحادثة.")
+        await update.effective_message.reply_text("تعذر إكمال الربط مؤقتًا. حاول لاحقًا.")
+        return
+    if not linked:
+        await update.effective_message.reply_text("انتهت صلاحية رمز الربط أو استُخدم سابقًا.")
+        return
+    await update.effective_message.reply_text(
+        "تم ربط هذه المحادثة بالتقرير الأسبوعي بنجاح.\n"
+        "لا يتضمن التقرير معرفات مستخدمين أو نصوص رسائل."
+    )
+
+
+async def send_weekly_usage_report(
+    bot: Any,
+    database: Database,
+    *,
+    now: datetime | None = None,
+    test: bool = False,
+) -> dict[str, Any]:
+    """إرسال تقرير مجمع لمستلم الإدارة مع claim أسبوعي يمنع التكرار."""
+    current_date = (now or datetime.now().astimezone()).date()
+    config = await _database_call(database.get_report_delivery_config)
+    if not config or config.get("telegram_chat_id") is None:
+        return {"sent": False, "reason": "not_linked"}
+
+    current, previous = await _database_call(database.get_completed_week_reports, current_date)
+    week_start = current["start_date"]
+    if not test:
+        claimed = await _database_call(database.claim_weekly_report, week_start)
+        if not claimed:
+            return {"sent": False, "reason": "already_sent"}
+
+    try:
+        await bot.send_message(
+            chat_id=int(config["telegram_chat_id"]),
+            text=format_weekly_usage_report(current, previous, test=test),
+            parse_mode=ParseMode.HTML,
+        )
+    except TelegramError:
+        if not test:
+            try:
+                await _database_call(database.release_weekly_report, week_start)
+            except DatabaseError:
+                logger.exception("تعذر تحرير حجز تقرير فشل إرساله.")
+        logger.warning("فشل إرسال التقرير الأسبوعي إلى مستلم الإدارة.")
+        return {"sent": False, "reason": "telegram_error"}
+
+    if not test:
+        try:
+            await _database_call(
+                database.complete_weekly_report,
+                week_start,
+                current["total_interactions"],
+            )
+            await _database_call(database.prune_usage_data, current_date)
+        except DatabaseError:
+            logger.exception("أُرسل التقرير لكن تعذر تحديث سجل التشغيل أو الاحتفاظ.")
+    return {
+        "sent": True,
+        "test": test,
+        "week_start": week_start.isoformat(),
+        "total_interactions": current["total_interactions"],
+    }
+
+
+async def maybe_send_weekly_usage_report(
+    bot: Any,
+    database: Database,
+    *,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """إرسال التقرير يوم الأحد فقط؛ يعمل الـclaim كحاجز تكرار ثانٍ."""
+    current = now or datetime.now().astimezone()
+    if current.weekday() != 6:
+        return {"sent": False, "reason": "not_sunday"}
+    return await send_weekly_usage_report(bot, database, now=current)
 
 
 async def publish_daily_content(
@@ -700,8 +846,13 @@ async def daily_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     try:
         await publish_daily_content(context.bot, database, settings=settings)
+        await maybe_send_weekly_usage_report(
+            context.bot,
+            database,
+            now=datetime.now(settings.timezone),
+        )
     except DatabaseError:
-        logger.exception("فشلت مهمة النشر اليومي.")
+        logger.exception("فشلت مهمة النشر اليومي أو التقرير الأسبوعي.")
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -739,6 +890,7 @@ def create_bot_application(settings: Settings, database: Database) -> Applicatio
     application.add_handler(CommandHandler("quiz", quiz_command))
     application.add_handler(CommandHandler("systems", systems_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("link_report", link_report_command))
     application.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu\|(today|quiz_en|topics|stats|help|home)$"))
     application.add_handler(CallbackQueryHandler(topic_callback, pattern=r"^topic\|[a-z-]+$"))
     application.add_handler(CallbackQueryHandler(detail_callback, pattern=r"^detail\|[a-z-]+$"))
@@ -765,6 +917,7 @@ async def configure_bot_commands(application: Application) -> None:
             BotCommand("quiz", "سؤال عربي للمراجعة"),
             BotCommand("systems", "الأجهزة الطبية"),
             BotCommand("stats", "إحصاءات البوت"),
+            BotCommand("link_report", "ربط التقرير الإداري"),
             BotCommand("help", "المساعدة | Help"),
         ]
     )
