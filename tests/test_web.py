@@ -151,6 +151,14 @@ def test_public_topics_fails_closed_with_generic_error():
     assert "تفاصيل داخلية حساسة" not in response.get_data(as_text=True)
 
 
+def test_public_medical_topic_image_is_served_as_jpeg_without_admin_session():
+    client = create_client()
+    response = client.get("/static/medical_topics/asthma.jpg")
+    assert response.status_code == 200
+    assert response.content_type == "image/jpeg"
+    assert response.data.startswith(b"\xff\xd8\xff")
+
+
 def test_delete_disease_requires_confirmation_page_then_post():
     database = FakeDatabase()
     app = create_web_app(settings(), database)
