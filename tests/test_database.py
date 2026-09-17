@@ -34,3 +34,30 @@ def test_search_diseases_handles_arabic_and_english():
     assert database.search_diseases("اصطناعي")[0]["id"] == "1"
     assert database.search_diseases("test")[0]["id"] == "2"
     assert database.search_diseases("") == []
+
+
+def test_public_topics_are_limited_and_allowlisted():
+    rows = [
+        {
+            "id": "1",
+            "name_ar": "مرض اصطناعي",
+            "name_en": "Synthetic Disease",
+            "system": "جهاز اصطناعي",
+            "importance": 2,
+            "week_number": 1,
+            "treatment": "حقل غير عام",
+            "definition": "حقل غير عام",
+        }
+    ]
+    database = Database(client=FakeClient(rows))
+    topics = database.list_public_topics(limit=500)
+    assert topics == [
+        {
+            "id": "1",
+            "name_ar": "مرض اصطناعي",
+            "name_en": "Synthetic Disease",
+            "system": "جهاز اصطناعي",
+            "importance": 2,
+            "week_number": 1,
+        }
+    ]

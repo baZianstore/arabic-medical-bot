@@ -5,6 +5,7 @@ from datetime import time
 from zoneinfo import ZoneInfo
 
 from config import Settings
+from database import DatabaseError
 from web import create_web_app
 
 
@@ -14,6 +15,20 @@ class FakeDatabase:
     def get_stats(self): return {"diseases": 2, "questions": 6, "subscribers": 3}
     def list_diseases(self): return []
     def list_questions(self): return []
+    def list_public_topics(self, limit=100):
+        assert limit == 100
+        return [
+            {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name_ar": "مرض تعليمي اصطناعي",
+                "name_en": "Synthetic Educational Disease",
+                "system": "جهاز اصطناعي",
+                "importance": 3,
+                "week_number": 2,
+                "definition": "يجب ألا يظهر هذا الحقل",
+                "treatment": "يجب ألا يظهر هذا الحقل",
+            }
+        ]
     def get_disease(self, disease_id): return {"id": disease_id, "name_ar": "مرض اصطناعي"}
     def delete_disease(self, disease_id): self.deleted_disease = disease_id
 
@@ -98,6 +113,40 @@ def test_scheduler_endpoint_fails_closed_without_bot_application():
     client = create_client()
     response = client.post("/tasks/daily-publish", headers={"Authorization": "Bearer " + "s" * 20})
     assert response.status_code == 503
+
+
+def test_public_topics_returns_only_allowlisted_fields_with_cors_and_cache():
+    client = create_client()
+    response = client.get("/api/public/topics")
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == "*"
+    assert response.headers["Cache-Control"].startswith("public, max-age=60")
+    assert response.headers["ETag"]
+    payload = response.get_json()
+    assert payload["source"] == "supabase"
+    assert payload["count"] == 1
+    assert set(payload["topics"][0]) == {
+        "id", "title", "title_en", "specialty", "audience", "weight", "status", "order"
+    }
+    assert payload["topics"][0]["weight"] == "عالي جدًا"
+    assert b"definition" not in response.data
+    assert b"treatment" not in response.data
+
+    cached = client.get("/api/public/topics", headers={"If-None-Match": response.headers["ETag"]})
+    assert cached.status_code == 304
+
+
+def test_public_topics_fails_closed_with_generic_error():
+    class FailingDatabase(FakeDatabase):
+        def list_public_topics(self, limit=100):
+            raise DatabaseError("تفاصيل داخلية حساسة")
+
+    app = create_web_app(settings(), FailingDatabase())
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    response = app.test_client().get("/api/public/topics")
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "60"
+    assert "تفاصيل داخلية حساسة" not in response.get_data(as_text=True)
 
 
 def test_delete_disease_requires_confirmation_page_then_post():

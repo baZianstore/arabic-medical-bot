@@ -36,6 +36,27 @@ class Database:
         except Exception as exc:
             raise DatabaseError("تعذر تحميل قائمة الأمراض.") from exc
 
+    def list_public_topics(self, limit: int = 100) -> list[dict[str, Any]]:
+        """إرجاع حقول الفهرس العامة فقط دون التفاصيل العلاجية أو بيانات المشتركين."""
+        safe_limit = max(1, min(limit, 100))
+        fields = ("id", "name_ar", "name_en", "system", "importance", "week_number")
+        try:
+            response = (
+                self.client.table("diseases")
+                .select(",".join(fields))
+                .order("week_number")
+                .order("name_ar")
+                .limit(safe_limit)
+                .execute()
+            )
+            return [
+                {field: row.get(field) for field in fields}
+                for row in (response.data or [])
+                if isinstance(row, dict)
+            ]
+        except Exception as exc:
+            raise DatabaseError("تعذر تحميل الفهرس العام.") from exc
+
     def get_disease(self, disease_id: str) -> dict[str, Any] | None:
         """إرجاع مرض واحد، أو None إذا لم يكن موجودًا."""
         try:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import logging
 import time
 from collections import defaultdict, deque
@@ -36,6 +38,8 @@ from forms import DeleteForm, DiseaseForm, LoginForm, QuestionForm
 logger = logging.getLogger(__name__)
 csrf = CSRFProtect()
 F = TypeVar("F", bound=Callable[..., Any])
+PUBLIC_TOPIC_WEIGHTS = {1: "متوسط", 2: "عالٍ", 3: "عالي جدًا"}
+PUBLIC_TOPICS_CACHE_SECONDS = 60
 
 
 class LoginAttemptGuard:
@@ -99,6 +103,7 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
     )
     csrf.init_app(app)
     guard = LoginAttemptGuard()
+    public_topics_cache: dict[str, Any] = {"expires_at": 0.0, "payload": None, "etag": ""}
 
     @app.after_request
     def add_security_headers(response):
@@ -111,7 +116,7 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-        response.headers["Cache-Control"] = "no-store"
+        response.headers.setdefault("Cache-Control", "no-store")
         if settings.production:
             response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
@@ -119,6 +124,69 @@ def create_web_app(settings: Settings, database: Database, bot_application: Appl
     @app.get("/health")
     def health():
         return jsonify({"status": "ok"})
+
+    @app.get("/api/public/topics")
+    def public_topics():
+        """إرجاع فهرس تعليمي عام فقط، بلا أسرار أو تفاصيل علاجية أو بيانات مستخدمين."""
+        now = time.monotonic()
+        payload = public_topics_cache["payload"]
+        if payload is None or now >= public_topics_cache["expires_at"]:
+            try:
+                rows = database.list_public_topics(limit=100)
+            except DatabaseError:
+                logger.exception("فشل تحميل الفهرس العام من قاعدة البيانات.")
+                response = jsonify({"error": "تعذر تحديث الفهرس مؤقتًا."})
+                response.status_code = HTTPStatus.SERVICE_UNAVAILABLE
+                response.headers["Retry-After"] = "60"
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                return response
+
+            topics = []
+            for position, row in enumerate(rows, start=1):
+                title = str(row.get("name_ar") or "").strip()[:200]
+                if not title:
+                    continue
+                try:
+                    importance = int(row.get("importance") or 1)
+                except (TypeError, ValueError):
+                    importance = 1
+                try:
+                    order = int(row.get("week_number") or position)
+                except (TypeError, ValueError):
+                    order = position
+                topics.append(
+                    {
+                        "id": str(row.get("id") or position)[:64],
+                        "title": title,
+                        "title_en": str(row.get("name_en") or "").strip()[:200],
+                        "specialty": str(row.get("system") or "طب عام").strip()[:120],
+                        "audience": "تعليم طبي عام",
+                        "weight": PUBLIC_TOPIC_WEIGHTS.get(importance, "متوسط"),
+                        "status": "منشور",
+                        "order": max(1, min(order, 53)),
+                    }
+                )
+
+            payload = {"topics": topics, "count": len(topics), "source": "supabase"}
+            etag_source = json.dumps(topics, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            public_topics_cache.update(
+                expires_at=now + PUBLIC_TOPICS_CACHE_SECONDS,
+                payload=payload,
+                etag=hashlib.sha256(etag_source.encode("utf-8")).hexdigest(),
+            )
+
+        etag = public_topics_cache["etag"]
+        if etag and request.if_none_match.contains(etag):
+            response = app.response_class(status=HTTPStatus.NOT_MODIFIED)
+        else:
+            response = jsonify(payload)
+        if etag:
+            response.set_etag(etag)
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET"
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+        return response
 
     @app.route("/login", methods=["GET", "POST"])
     def login():
