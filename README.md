@@ -84,7 +84,7 @@
 | `ADMIN_USERNAME` | اسم جديد أو `admin` |
 | `ADMIN_PASSWORD` | كلمة قوية وفريدة من 12 محرفًا على الأقل؛ لا تستخدم `admin123` على الإنترنت |
 
-ينشئ Render تلقائيًا `FLASK_SECRET_KEY` و`WEBHOOK_SECRET` و`SCHEDULER_SECRET`، ويقرأ التطبيق اسم المضيف الذي يوفره Render لتكوين webhook، لذلك لا تحتاج إلى معرفة الرابط قبل إنشاء الخدمة. احتفظ بقيمة `SCHEDULER_SECRET` لأنك ستحتاجها في GitHub.
+ينشئ Render تلقائيًا `FLASK_SECRET_KEY` و`WEBHOOK_SECRET` و`SCHEDULER_SECRET`، ويوفر عنوان الخدمة الكامل في المتغير `RENDER_EXTERNAL_URL`. يقرأ التطبيق هذا المتغير تلقائيًا لتكوين webhook، لذلك لا تحتاج إلى إدخال `WEBHOOK_URL` يدويًا أو معرفة الرابط قبل إنشاء الخدمة. يدعم التطبيق أيضًا `RENDER_EXTERNAL_HOSTNAME` للتوافق مع إعدادات Render القديمة. احتفظ بقيمة `SCHEDULER_SECRET` لأنك ستحتاجها في GitHub.
 
 ### إدخال البيانات النموذجية
 

@@ -75,7 +75,12 @@ class Settings:
         webhook_secret = os.getenv("WEBHOOK_SECRET", "")
         scheduler_secret = os.getenv("SCHEDULER_SECRET", "")
         webhook_url = os.getenv("WEBHOOK_URL", "").strip().rstrip("/") or None
+        # يوفر Render عنوان الخدمة الكامل في RENDER_EXTERNAL_URL تلقائيًا.
+        # يبقى دعم RENDER_EXTERNAL_HOSTNAME للتوافق مع إعدادات Render القديمة.
+        render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
         render_host = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+        if not webhook_url and render_url:
+            webhook_url = render_url
         if not webhook_url and render_host:
             webhook_url = f"https://{render_host}"
 
