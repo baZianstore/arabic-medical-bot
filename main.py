@@ -9,6 +9,7 @@ import threading
 import uvicorn
 from asgiref.wsgi import WsgiToAsgi
 from telegram import Update
+from telegram.error import InvalidToken
 
 from bot import configure_bot_commands, create_bot_application
 from config import ConfigurationError, Settings
@@ -88,6 +89,9 @@ def main() -> None:
     except ConfigurationError as exc:
         logger.error("خطأ في الإعدادات: %s", exc)
         raise SystemExit(2) from exc
+    except InvalidToken:
+        logger.error("توكن Telegram غير صالح أو تم إلغاؤه. أنشئ توكنًا جديدًا من BotFather.")
+        raise SystemExit(3) from None
 
 
 if __name__ == "__main__":
